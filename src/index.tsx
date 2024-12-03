@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom';
+import { createRoot } from 'react-dom/client';
 import { Provider as ReduxProvider } from 'react-redux';
 import { configureStore } from './store';
 import { persistStore } from 'redux-persist';
@@ -50,4 +51,6 @@ const provider = (
   </ReduxProvider>
 );
 
-ReactDOM.render(<React.StrictMode>{provider}</React.StrictMode>, document.getElementById('root'));
+const container = document.getElementById('root');
+const root = createRoot(container!);
+root.render(<React.StrictMode>{provider}</React.StrictMode>, container);
