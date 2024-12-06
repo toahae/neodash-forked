@@ -53,12 +53,8 @@ const NeoMapChart = (props: ChartProps) => {
   const [shouldRerender, setShouldRerender] = useState(false); // New state variable
   // Effect to handle rerendering logic
   useEffect(() => {
-    // Logic to handle rerendering when shouldRerender changes
     if (shouldRerender) {
-      // Perform any necessary cleanup or updates
-      console.log('Component rerender triggered.');
-      // Optionally reset shouldRerender
-      setShouldRerender(false); // Reset after handling
+      setShouldRerender(false);
     }
   }, [shouldRerender]);
   // Per pixel, scaling factors for the latitude/longitude mapping function.
@@ -72,7 +68,6 @@ const NeoMapChart = (props: ChartProps) => {
 
   useEffect(() => {
     buildVisualizationDictionaryFromRecords(props.records);
-    console.log('Updated Visualization in useEffect', props.records);
   }, []);
 
   let nodes = {};
@@ -245,8 +240,6 @@ const NeoMapChart = (props: ChartProps) => {
       links: linksList,
     };
     setData(dataSet);
-
-    console.log('Updated Visualization in buildVisualization', records);
     return dataSet;
   }
 
@@ -256,17 +249,14 @@ const NeoMapChart = (props: ChartProps) => {
     if (layerType === 'circle') {
       const radius = layer.getRadius();
       const center = layer.getLatLng();
-      console.log('Circle created:', { center, radius });
       handleGeoFilter({ lat: center.lat, lon: center.lng }, radius, 'circle');
     } else if (layerType === 'rectangle') {
       const bounds = layer.getBounds();
       const topLeft = bounds.getNorthWest();
       const bottomRight = bounds.getSouthEast();
-      console.log('Rectangle created:', { topLeft, bottomRight });
       handleGeoFilter({ topLeft, bottomRight }, null, 'rectangle');
     } else if (layerType === 'polygon' || layerType === 'polyline') {
       const latLngs = layer.getLatLngs(); // Array of LatLng points
-      console.log(`${layerType} created:`, latLngs);
       handleGeoFilter({ points: latLngs }, null, layerType);
     }
   };
@@ -317,33 +307,21 @@ const NeoMapChart = (props: ChartProps) => {
 
     if (props.queryCallback) {
       props.queryCallback(geoLocationQuery, {}, (updated_records) => {
-        let dataSet = buildVisualizationDictionaryFromRecords(updated_records);
-        console.log('Filtered data applied to map.', geoLocationQuery, updated_records);
+        buildVisualizationDictionaryFromRecords(updated_records);
         setShouldRerender(true);
       });
 
-      if (props.createNotification) {
-        props.createNotification('Query Updated', `${type} geo-location filter applied.`);
-      }
+      // if (props.createNotification) {
+      //   props.createNotification('Query Updated', `${type} geo-location filter applied.`);
+      // }
     }
   };
 
   const onDeleted = () => {
-    // Restore the original query when the circle is removed
-    console.log('Circle removed, reverting to the original query:', props.query);
-
-    // Notify the state change to restore the original query
-    // props.setQuery(props.query); // Revert to the original unmodified query
-
     props.queryCallback(props.query, {}, (records) => {
       buildVisualizationDictionaryFromRecords(records);
-      setData((prevData) => ({
-        ...prevData,
-      }));
+      setShouldRerender(true);
     });
-
-    // Optionally trigger a reload to update the chart
-    // Example: triggerReload();
   };
 
   const MouseCoordinates = () => {
@@ -399,7 +377,7 @@ const NeoMapChart = (props: ChartProps) => {
         <EditControl
           position='topright'
           draw={{
-            rectangle: true, // Disable rectangle drawing if not needed
+            rectangle: true,
             polygon: true,
             polyline: true,
             marker: false,
