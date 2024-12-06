@@ -878,6 +878,11 @@ const _REPORT_TYPES = {
         values: ['markers', 'heatmap'],
         default: 'markers',
       },
+      filterQuery: {
+        label: 'Update Query',
+        type: SELECTION_TYPES.MULTILINE_TEXT,
+        default: 'MATCH (n)-[r]->(m)',
+      },
       clusterMarkers: {
         label: 'Cluster Markers',
         type: SELECTION_TYPES.LIST,
