@@ -27,7 +27,6 @@ const NeoMapChart = (props: ChartProps) => {
   const defaultRelWidth = props.settings && props.settings.defaultRelWidth ? props.settings.defaultRelWidth : 3.5;
   const defaultRelColor = props.settings && props.settings.defaultRelColor ? props.settings.defaultRelColor : '#666';
   const nodeColorScheme = props.settings && props.settings.nodeColorScheme ? props.settings.nodeColorScheme : 'neodash';
-  const filterQuery = props.settings && props.settings.filterQuery ? props.settings.filterQuery : 'MATCH (n)-[r]->(m)';
   const styleRules = useStyleRules(
     extensionEnabled(props.extensions, 'styling'),
     props.settings.styleRules,
@@ -50,17 +49,7 @@ const NeoMapChart = (props: ChartProps) => {
       : [];
 
   const [data, setData] = React.useState({ nodes: [], links: [], zoom: 0, centerLatitude: 0, centerLongitude: 0 });
-  const [shouldRerender, setShouldRerender] = useState(false); // New state variable
-  // Effect to handle rerendering logic
-  useEffect(() => {
-    // Logic to handle rerendering when shouldRerender changes
-    if (shouldRerender) {
-      // Perform any necessary cleanup or updates
-      console.log('Component rerender triggered.');
-      // Optionally reset shouldRerender
-      setShouldRerender(false); // Reset after handling
-    }
-  }, [shouldRerender]);
+
   // Per pixel, scaling factors for the latitude/longitude mapping function.
   const widthScale = 8.55;
   const heightScale = 6.7;
@@ -72,7 +61,6 @@ const NeoMapChart = (props: ChartProps) => {
 
   useEffect(() => {
     buildVisualizationDictionaryFromRecords(props.records);
-    console.log('Updated Visualization in useEffect', props.records);
   }, []);
 
   let nodes = {};
@@ -237,17 +225,14 @@ const NeoMapChart = (props: ChartProps) => {
     let longProjectedHeight = longDiff / longHeightScaleFactor;
     let longZoomFit = Math.ceil(Math.log2(1.0 / longProjectedHeight));
     // Set data based on result values.
-    let dataSet = {
+    setData({
       zoom: Math.min(latZoomFit, longZoomFit),
       centerLatitude: latitudes ? latitudes.reduce((a, b) => a + b, 0) / latitudes.length : 0,
       centerLongitude: longitudes ? longitudes.reduce((a, b) => a + b, 0) / longitudes.length : 0,
       nodes: nodesList,
       links: linksList,
-    };
-    setData(dataSet);
-
-    console.log('Updated Visualization in buildVisualization', records);
-    return dataSet;
+    });
+    console.log('Updated records for visualization: ', nodes);
   }
 
   const onCreated = (e) => {
@@ -277,7 +262,7 @@ const NeoMapChart = (props: ChartProps) => {
     if (type === 'circle') {
       const { lat, lon } = filterData;
       geoLocationQuery = `
-      ${filterQuery}
+      MATCH (n)-[r]->(m)
       WHERE point.distance(n.location, point({latitude: ${lat}, longitude: ${lon}})) <= ${radius}
       RETURN n, r, m
     `;
@@ -289,7 +274,7 @@ const NeoMapChart = (props: ChartProps) => {
       const lonMax = bottomRight.lng;
 
       geoLocationQuery = `
-      ${filterQuery}
+      MATCH (n)-[r]->(m)
       WHERE 
         n.location.latitude >= ${latMin} AND n.location.latitude <= ${latMax} AND
         n.location.longitude >= ${lonMin} AND n.location.longitude <= ${lonMax}
@@ -300,7 +285,7 @@ const NeoMapChart = (props: ChartProps) => {
       const polygonPoints = points[0].map((point) => `{latitude: ${point.lat}, longitude: ${point.lng}}`).join(', ');
 
       geoLocationQuery = `
-      ${filterQuery}
+      MATCH (n)-[r]->(m)
       WHERE point.inPolygon(n.location, [${polygonPoints}])
       RETURN n, r, m
     `;
@@ -309,17 +294,20 @@ const NeoMapChart = (props: ChartProps) => {
       const linePoints = points.map((point) => `{latitude: ${point.lat}, longitude: ${point.lng}}`).join(', ');
 
       geoLocationQuery = `
-      ${filterQuery}
+      MATCH (n)-[r]->(m)
       WHERE ANY(p IN [${linePoints}] WHERE point.distance(n.location, point(p)) <= ${radius || 500})
       RETURN n, r, m
     `;
     }
 
     if (props.queryCallback) {
-      props.queryCallback(geoLocationQuery, {}, (updated_records) => {
-        let dataSet = buildVisualizationDictionaryFromRecords(updated_records);
-        console.log('Filtered data applied to map.', geoLocationQuery, updated_records);
-        setShouldRerender(true);
+      props.queryCallback(geoLocationQuery, {}, (records) => {
+        buildVisualizationDictionaryFromRecords(records);
+        // updateMapData(newNodes, newLinks); // Redraw map with new data
+        console.log('Filtered data applied to map.', geoLocationQuery);
+        setData((prevData) => ({
+          ...prevData,
+        }));
       });
 
       if (props.createNotification) {
@@ -330,20 +318,18 @@ const NeoMapChart = (props: ChartProps) => {
 
   const onDeleted = () => {
     // Restore the original query when the circle is removed
-    console.log('Circle removed, reverting to the original query:', props.query);
+    console.log('layer removed, reverting to the original query:', props.query);
 
     // Notify the state change to restore the original query
     // props.setQuery(props.query); // Revert to the original unmodified query
-
-    props.queryCallback(props.query, {}, (records) => {
-      buildVisualizationDictionaryFromRecords(records);
-      setData((prevData) => ({
-        ...prevData,
-      }));
-    });
-
-    // Optionally trigger a reload to update the chart
-    // Example: triggerReload();
+    if (props.queryCallback) {
+      props.queryCallback(props.query, {}, (records) => {
+        buildVisualizationDictionaryFromRecords(records);
+        setData((prevData) => ({
+          ...prevData,
+        }));
+      });
+    }
   };
 
   const MouseCoordinates = () => {
@@ -384,12 +370,11 @@ const NeoMapChart = (props: ChartProps) => {
   // https://stackoverflow.com/questions/69751481/i-want-to-use-useref-to-access-an-element-in-a-reat-leaflet-and-use-the-flyto
   return (
     <MapContainer
-      key={key}
       style={{ width: '100%', height: '100%' }}
       center={[data.centerLatitude ? data.centerLatitude : 0, data.centerLongitude ? data.centerLongitude : 0]}
       zoom={data.zoom ? data.zoom : 0}
       maxZoom={18}
-      scrollWheelZoom={true}
+      scrollWheelZoom={false}
     >
       {heatmap}
       <TileLayer attribution={attribution} url={mapProviderURL ? mapProviderURL : ''} />
@@ -405,8 +390,6 @@ const NeoMapChart = (props: ChartProps) => {
             marker: false,
             circlemarker: false,
           }}
-          onCreated={onCreated}
-          onDeleted={onDeleted}
         />
       </FeatureGroup>
       <MouseCoordinates />
