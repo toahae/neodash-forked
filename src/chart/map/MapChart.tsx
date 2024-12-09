@@ -1,9 +1,11 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ChartProps } from '../Chart';
 import { categoricalColorSchemes } from '../../config/ColorConfig';
 import { valueIsArray, valueIsNode, valueIsRelationship, valueIsPath, valueIsObject } from '../../chart/ChartUtils';
-import { MapContainer, TileLayer } from 'react-leaflet';
+import { MapContainer, TileLayer, FeatureGroup, useMapEvents } from 'react-leaflet';
+import { EditControl } from 'react-leaflet-draw';
 import 'leaflet/dist/leaflet.css';
+import 'leaflet-draw/dist/leaflet.draw.css';
 import { evaluateRulesOnNode, useStyleRules } from '../../extensions/styling/StyleRuleEvaluator';
 import { createHeatmap } from './layers/HeatmapLayer';
 import { createMarkers } from './layers/MarkerLayer';
@@ -25,6 +27,7 @@ const NeoMapChart = (props: ChartProps) => {
   const defaultRelWidth = props.settings && props.settings.defaultRelWidth ? props.settings.defaultRelWidth : 3.5;
   const defaultRelColor = props.settings && props.settings.defaultRelColor ? props.settings.defaultRelColor : '#666';
   const nodeColorScheme = props.settings && props.settings.nodeColorScheme ? props.settings.nodeColorScheme : 'neodash';
+  const filterQuery = props.settings && props.settings.filterQuery ? props.settings.filterQuery : 'MATCH (n)-[r]->(m)';
   const styleRules = useStyleRules(
     extensionEnabled(props.extensions, 'styling'),
     props.settings.styleRules,
@@ -47,7 +50,13 @@ const NeoMapChart = (props: ChartProps) => {
       : [];
 
   const [data, setData] = React.useState({ nodes: [], links: [], zoom: 0, centerLatitude: 0, centerLongitude: 0 });
-
+  const [shouldRerender, setShouldRerender] = useState(false); // New state variable
+  // Effect to handle rerendering logic
+  useEffect(() => {
+    if (shouldRerender) {
+      setShouldRerender(false);
+    }
+  }, [shouldRerender]);
   // Per pixel, scaling factors for the latitude/longitude mapping function.
   const widthScale = 8.55;
   const heightScale = 6.7;
@@ -223,14 +232,126 @@ const NeoMapChart = (props: ChartProps) => {
     let longProjectedHeight = longDiff / longHeightScaleFactor;
     let longZoomFit = Math.ceil(Math.log2(1.0 / longProjectedHeight));
     // Set data based on result values.
-    setData({
+    let dataSet = {
       zoom: Math.min(latZoomFit, longZoomFit),
       centerLatitude: latitudes ? latitudes.reduce((a, b) => a + b, 0) / latitudes.length : 0,
       centerLongitude: longitudes ? longitudes.reduce((a, b) => a + b, 0) / longitudes.length : 0,
       nodes: nodesList,
       links: linksList,
-    });
+    };
+    setData(dataSet);
+    return dataSet;
   }
+
+  const onCreated = (e) => {
+    const { layerType, layer } = e;
+
+    if (layerType === 'circle') {
+      const radius = layer.getRadius();
+      const center = layer.getLatLng();
+      handleGeoFilter({ lat: center.lat, lon: center.lng }, radius, 'circle');
+    } else if (layerType === 'rectangle') {
+      const bounds = layer.getBounds();
+      const topLeft = bounds.getNorthWest();
+      const bottomRight = bounds.getSouthEast();
+      handleGeoFilter({ topLeft, bottomRight }, null, 'rectangle');
+    } else if (layerType === 'polygon' || layerType === 'polyline') {
+      const latLngs = layer.getLatLngs(); // Array of LatLng points
+      handleGeoFilter({ points: latLngs }, null, layerType);
+    }
+  };
+
+  const handleGeoFilter = (filterData, radius, type) => {
+    let geoLocationQuery;
+
+    if (type === 'circle') {
+      const { lat, lon } = filterData;
+      geoLocationQuery = `
+      ${filterQuery}
+      WHERE point.distance(n.location, point({latitude: ${lat}, longitude: ${lon}})) <= ${radius}
+      RETURN n, r, m
+    `;
+    } else if (type === 'rectangle') {
+      const { topLeft, bottomRight } = filterData;
+      const latMin = bottomRight.lat;
+      const latMax = topLeft.lat;
+      const lonMin = topLeft.lng;
+      const lonMax = bottomRight.lng;
+
+      geoLocationQuery = `
+      ${filterQuery}
+      WHERE 
+        n.location.latitude >= ${latMin} AND n.location.latitude <= ${latMax} AND
+        n.location.longitude >= ${lonMin} AND n.location.longitude <= ${lonMax}
+      RETURN n, r, m
+    `;
+    } else if (type === 'polygon') {
+      const { points } = filterData;
+      const polygonPoints = points[0].map((point) => `{latitude: ${point.lat}, longitude: ${point.lng}}`).join(', ');
+
+      geoLocationQuery = `
+      ${filterQuery}
+      WHERE point.inPolygon(n.location, [${polygonPoints}])
+      RETURN n, r, m
+    `;
+    } else if (type === 'polyline') {
+      const { points } = filterData;
+      const linePoints = points.map((point) => `{latitude: ${point.lat}, longitude: ${point.lng}}`).join(', ');
+
+      geoLocationQuery = `
+      ${filterQuery}
+      WHERE ANY(p IN [${linePoints}] WHERE point.distance(n.location, point(p)) <= ${radius || 500})
+      RETURN n, r, m
+    `;
+    }
+
+    if (props.queryCallback) {
+      props.queryCallback(geoLocationQuery, {}, (updated_records) => {
+        buildVisualizationDictionaryFromRecords(updated_records);
+        setShouldRerender(true);
+      });
+
+      // if (props.createNotification) {
+      //   props.createNotification('Query Updated', `${type} geo-location filter applied.`);
+      // }
+    }
+  };
+
+  const onDeleted = () => {
+    props.queryCallback(props.query, {}, (records) => {
+      buildVisualizationDictionaryFromRecords(records);
+      setShouldRerender(true);
+    });
+  };
+
+  const MouseCoordinates = () => {
+    const [coords, setCoords] = useState({ lat: 0, lng: 0 });
+
+    // Hook to listen for mouse movements
+    useMapEvents({
+      mousemove: (e) => {
+        setCoords({
+          lat: e.latlng.lat.toFixed(5), // Limit to 5 decimal places for better readability
+          lng: e.latlng.lng.toFixed(5),
+        });
+      },
+    });
+
+    return (
+      <div
+        style={{
+          position: 'absolute',
+          bottom: '10px',
+          left: '10px',
+          backgroundColor: 'white',
+          padding: '5px',
+          zIndex: 1000,
+        }}
+      >
+        Lat: {coords.lat}, Lng: {coords.lng}
+      </div>
+    );
+  };
 
   // TODO this should definitely be refactored as an if/case statement.
   const markers = layerType == 'markers' ? createMarkers(data, props) : '';
@@ -246,12 +367,27 @@ const NeoMapChart = (props: ChartProps) => {
       center={[data.centerLatitude ? data.centerLatitude : 0, data.centerLongitude ? data.centerLongitude : 0]}
       zoom={data.zoom ? data.zoom : 0}
       maxZoom={18}
-      scrollWheelZoom={false}
+      scrollWheelZoom={true}
     >
       {heatmap}
       <TileLayer attribution={attribution} url={mapProviderURL ? mapProviderURL : ''} />
       {markers}
       {lines}
+      <FeatureGroup>
+        <EditControl
+          position='topright'
+          draw={{
+            rectangle: true,
+            polygon: true,
+            polyline: true,
+            marker: false,
+            circlemarker: false,
+          }}
+          onCreated={onCreated}
+          onDeleted={onDeleted}
+        />
+      </FeatureGroup>
+      <MouseCoordinates />
     </MapContainer>
   );
 };
